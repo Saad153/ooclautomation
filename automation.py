@@ -15,58 +15,36 @@ import shutil
 username = "OLLATISU001"
 password = "Atil@987654321"
 
-def read_excel_to_dicts(file_path, sheet_name=0, header_search_rows=10):
-    # Try engines that commonly work with XLS/XLSX
+import pandas as pd
+
+def read_excel_all_records(file_path, sheet_name=0):
     engines = ["xlrd", "openpyxl", None]
 
-    # Step 1: load a small preview without header to detect header row
-    preview = None
-    last_err = None
-    for eng in engines:
-        try:
-            preview = pd.read_excel(file_path, sheet_name=sheet_name, header=None, nrows=header_search_rows, engine=eng)
-            break
-        except Exception as e:
-            last_err = e
+    def read_excel(**kwargs):
+        last_error = None
+        for engine in engines:
+            try:
+                return pd.read_excel(
+                    file_path,
+                    sheet_name=sheet_name,
+                    engine=engine,
+                    **kwargs
+                )
+            except Exception as e:
+                last_error = e
+        raise RuntimeError(f"Failed to read Excel file: {last_error}")
 
-    if preview is None:
-        raise RuntimeError(f"Unable to read Excel preview: {last_err}")
+    # Read the sheet with first row as headers
+    df = read_excel(header=0)
 
-    header_row = None
-    for idx, row in preview.iterrows():
-        # Count non-null, non-empty values
-        non_null_count = row.count()
-        if non_null_count >= 2:
-            header_row = idx
-            break
+    # Drop fully empty rows
+    df.dropna(how="all", inplace=True)
 
-    if header_row is None:
-        header_row = 0
+    # NaN → None (JSON-safe)
+    df = df.where(pd.notna(df), None)
 
-    # Step 2: read full sheet with detected header
-    df = None
-    last_err = None
-    for eng in engines:
-        try:
-            df = pd.read_excel(file_path, sheet_name=sheet_name, header=header_row, engine=eng)
-            break
-        except Exception as e:
-            last_err = e
-
-    if df is None:
-        raise RuntimeError(f"Unable to read Excel with header row {header_row}: {last_err}")
-
-    # Normalize column names
-    df.columns = [str(c).strip() if not pd.isna(c) else "" for c in df.columns]
-
-    # Drop rows that are entirely empty
-    df = df.dropna(how="all")
-
-    # Replace NaN with None for JSON-compatibility and convert to list of dicts
-    df = df.where(pd.notnull(df), None)
-    records = df.to_dict(orient="records")
-
-    return records
+    # Convert to list of dictionaries with actual column names
+    return df.to_dict(orient="records")
 
 
 def start_automation_process():
@@ -139,7 +117,7 @@ def start_automation_process():
     try:
         time.sleep(2)  # Wait for browser to be ready
         driver.get(URL)
-
+        time.sleep(5)  # Wait for page to load
         def login(username, password):
             try:
                 hw = Handywrapper(driver)
@@ -162,9 +140,10 @@ def start_automation_process():
 
                 # hw.Click_element(By.XPATH, "//input[@type='checkbox']")
                 # Wait for login to complete and click submit
+                hw.Click_element(By.ID, "accept-cookies")
                 hw.Click_element(By.ID, "ext_submitLogin-btnInnerEl")
                 print("Login successful.")
-                time.sleep(10)  # Wait for login to process
+                time.sleep(5)  # Wait for login to process
             except Exception as e:
                 print(f"An error occurred during login: {e}")
                 driver.quit()
@@ -173,6 +152,11 @@ def start_automation_process():
         def start_booking():
             try:
                 hw = Handywrapper(driver)
+                time.sleep(2)
+                hw.wait_explicitly(By.XPATH, "//span[.='No']")
+                hw.Click_element(By.XPATH, "//span[.='No']")  # Click 'No' on popup
+
+                hw.wait_explicitly(By.ID, "PGMID_1000023")
                 hw.hover(By.ID, "PGMID_1000023")  # Hover over 'Bookings' tab
                 hw.Click_element(By.ID, "PGMID_1400045")  # Click on 'Bookings' tab
                 print("Navigated to Create Booking page.")
@@ -183,10 +167,12 @@ def start_automation_process():
 
         login(username, password)
         start_booking()
-        
-        records = read_excel_to_dicts("PAK LPO 10-1.xls", sheet_name="Extended")
-        automate_process(driver, records)
 
+        shipment_records = read_excel_all_records(file_path='Shipment Plan_26Dec25 FOR HADDAD.xlsx', sheet_name='Sheet1')
+        dmf_records = read_excel_all_records(file_path="DMF MASTER SHEET FOR HADDAD ORDERS_FA'24(AutoRecovered).xlsx", sheet_name='Master')
+        automate_process(driver, shipment_records[:2])
+             
+        edit_details(driver, dmf_records)
 
     except Exception as e:
         print(f"An error occurred while setting up the WebDriver: {e}")
@@ -196,23 +182,84 @@ def start_automation_process():
 def automate_process(driver, records):
     try:
         hw = Handywrapper(driver)
+        first_record = True
         for record in records:
-            print(f"Processing record: {record}")
-            hw.find_element(By.ID, "brCreateForm:poNumTxt").send_keys(record.get("PO Number", ""))
+            if first_record:
+                print(f"Processing record: {record}")
+                time.sleep(2)  # Wait before processing next record
+                po_num = hw.find_element(By.ID, "brCreateForm:poNumTxt")
+                po_num.send_keys("0"+record.get("PO#", ""))
+                hw.Click_element(By.ID, "brCreateForm:custComboPo")
+                if record.get("Customer Name", "") == "USA":
+                    hw.Click_element(By.XPATH, f"//select[@id='brCreateForm:custComboPo']//option[.='HADDAD APPAREL GROUP, LTD']")
+                elif record.get("Customer Name", "") == "Europe":
+                    hw.Click_element(By.XPATH, f"//select[@id='brCreateForm:custComboPo']//option[.='Haddad Europe']")
 
-            hw.Click_element(By.ID, "brCreateForm:custComboPo")
-            if record.get("Customer Name", "") == "USA":
-                hw.Click_element(By.XPATH, f"//select[@id='brCreateForm:custComboPo']//option[.='HADDAD APPAREL GROUP, LTD']")
-            elif record.get("Customer Name", "") == "Europe":
-                hw.Click_element(By.XPATH, f"//select[@id='brCreateForm:custComboPo']//option[.='Haddad Europe']")
+                hw.Click_element(By.ID, "poItemsRadio:0")
 
-            hw.Click_element(By.ID, "brCreateForm:next")
-            time.sleep(2)  # Wait for next page to load
+                hw.Click_element(By.ID, "brCreateForm:next")
+                time.sleep(2)  # Wait for next page to load
+
+                hw.Click_element(By.ID, "vdrBrAmendForm:movementTypeBRSI001")
+                hw.find_element(By.ID, "crdBRSI008_extdate-inputEl").send_keys(record.get("Plan-HOD", ""))
+                hw.Click_element(By.XPATH, "//option[@value='CY-CY']")
+                hw.Click_element(By.ID, "vdrBrAmendForm:woodPackingBRSI002:1")
+                hw.Click_element(By.ID, "vdrBrAmendForm:msdsGoodsBRSI017:1")
+                hw.Click_element(By.ID, "vdrBrAmendForm:hasCustomsDeclaration:1")
+                first_record = False
+            
+            time.sleep(1)
+            hw.Click_element(By.ID, "vdrBrAmendForm:addItemBtn")
+
+            hw.find_element(By.ID, "vdrBrAmendForm:poNumTxt").send_keys("0" + record.get("PO#", ""))
+            time.sleep(1)  # Wait for item to be added
+            hw.Click_element(By.ID, "vdrBrAmendForm:j_id1710:0")
+
+            hw.Click_element(By.ID, "gridcolumn-1141-textEl")
+            hw.Click_element(By.ID, "vdrBrAmendForm:j_id1738")
+
 
     except Exception as e:
         print(f"An error occurred during automation: {e}")
     finally:
         driver.quit()
 
+def edit_details(driver, records):
+    try:
+        hw = Handywrapper(driver)
+        added_pos = hw.find_elements_list_of_text(By.XPATH, "//div[@id='poItemGrid-targetEl']/div[1]//tr[1]/td[3]")
+        records = ["0"+str(record.get("PO#", "")) for record in added_pos]
+        
+        for ind in range(len(records)):
+            PO_num = records[ind].get("PO#", "")
+            length = int(records[ind].get("L", "")) * 2.54
+            width = records[ind].get("W", "") * 2.54
+            height = records[ind].get("H", "") * 2.54
+            Net_weight = records[ind].get("NT-wt", "")
+            Gross_weight = records[ind].get("GR-Wt", "")
+            Color_code = records[ind].get("Pantone", "")
+
+            po_elem = hw.find_elements_list(By.XPATH, f"((//div[@id='poItemGrid-targetEl']//table[@class])[2]/tbody/tr)[{ind + 2}]")
+            time.sleep(2)  # Wait before processing next record
+            hw.Click_element(By.ID, f"((//div[@id='poItemGrid-targetEl']//table[@class])[2]/tbody/tr)[2]/td[1]")
+            
+            hw.find_element(By.XPATH, "(//table[contains(@id,'combobox')]//input[@value])[2]").clear().send_keys("CARTON")
+            
+            hw.find_element(By.XPATH, "(//table[contains(@id,'combobox')]//input[@value])[3]").clear().send_keys("PIECE")
+
+            hw.Click_element(By.ID, f"((//div[@id='poItemGrid-targetEl']//table[@class])[2]/tbody/tr)[2]/td[2]")
+
+            #vol gwt len, wid height
+            hw.find_element(By.XPATH, "(//div[contains(@id,'form')]//input[contains(@id,'numberfield')])[2]").clear().send_keys(Gross_weight)
+            hw.find_element(By.XPATH, "(//div[contains(@id,'form')]//input[contains(@id,'numberfield')])[3]").clear().send_keys(length)
+            hw.find_element(By.XPATH, "(//div[contains(@id,'form')]//input[contains(@id,'numberfield')])[4]").clear().send_keys(width)
+            hw.find_element(By.XPATH, "(//div[contains(@id,'form')]//input[contains(@id,'numberfield')])[5]").clear().send_keys(height)
+
+            hw.Click_element(By.ID, f"((//div[@id='poItemGrid-targetEl']//table[@class])[2]/tbody/tr)[2]/td[13]")
+            hw.find_element(By.XPATH, "//input[contains(@id,'textfield') and contains(@id,'input') and @name='G06']").clear().send_keys(Color_code)
+        
+        hw.Click_element(By.ID, "vdrBrAmendForm:submitBtn_hm_pre2")
+    except Exception as e:
+        print(f"An error occurred during editing details: {e}")
 
 start_automation_process()
