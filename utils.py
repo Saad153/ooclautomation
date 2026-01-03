@@ -30,6 +30,7 @@ class Handywrapper:
 
 
     def find_elements(self,By_type, locator=""):
+        time.sleep(0.5)
         element_list = []
         try:
             element_list = self.driver.find_elements(By_type, locator)
@@ -82,7 +83,7 @@ class Handywrapper:
         try:
             time.sleep(0.5)
             if element is not None:
-                self.wait_explicitly(By_type, locator)
+                # self.wait_explicitly(By_type, locator)
                 # self.driver.execute_script("arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});", element)
                 time.sleep(0.5)
                 element.click()
@@ -90,7 +91,7 @@ class Handywrapper:
                 self.wait_explicitly(By_type, locator)
                 element = self.find_element(By_type, locator)
                 self.wait_explicitly(By_type, locator)
-                # self.driver.execute_script("arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});", element)
+                
                 time.sleep(0.5)
                 element.click()
             return element
@@ -98,7 +99,18 @@ class Handywrapper:
             print("cannot click the element")
             return element
 
-
+    def scroll_to_element(self, By_type="", locator="", element=None):
+        try:
+            if element is None:
+                self.wait_explicitly(By_type, locator)
+                element = self.find_element(By_type, locator)
+            if element:
+                self.driver.execute_script("arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});", element)
+                time.sleep(0.5)
+                return element
+            return ""
+        except Exception:
+            return ""
     def hover(self, By_type="", locator="", element=None, pause=0.5):
 
         try:
@@ -127,7 +139,7 @@ class Handywrapper:
 
     def wait_explicitly(self, By_type, locator=""):
         try:
-            WebDriverWait(self.driver, 10).until(
+            WebDriverWait(self.driver, 30).until(
                 EC.presence_of_element_located((By_type, locator)))
         except:
             pass
@@ -158,3 +170,4 @@ class Handywrapper:
         })(arguments[0]);
         """
         return self.driver.execute_script(js, selectors)
+    

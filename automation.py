@@ -10,6 +10,9 @@ import pandas as pd
 from utils import Handywrapper
 import os
 import shutil
+from selenium.webdriver.common.action_chains import ActionChains
+
+
 
 
 username = "OLLATISU001"
@@ -47,8 +50,14 @@ def read_excel_all_records(file_path, sheet_name=0):
     return df.to_dict(orient="records")
 
 
-def start_automation_process():
+def start_automation_process(shipment_records,dmf_records):
     URL = "https://vendorpodium.oocllogistics.com/"
+    
+    selectors = [
+                "div.main-wrapper",    # top-level host CSS selector (change to actual host)
+                "div#content",         # element inside that host's shadowRoot (if nested)
+                'input[type="checkbox"]'
+                ]
 
     # If preferred, manually start Chrome, solve Cloudflare, then attach Selenium to it.
     # Set ATTACH_CHROME=1 in the environment before running this script to enable.
@@ -115,21 +124,13 @@ def start_automation_process():
                     """
         })
     try:
-        time.sleep(2)  # Wait for browser to be ready
-        driver.get(URL)
-        time.sleep(5)  # Wait for page to load
+        hw = Handywrapper(driver)  # Wait for browser to be ready
+        time.sleep(3)
+        driver.get(URL)  # Wait for page to load
+        time.sleep(2)
         def login(username, password):
             try:
-                hw = Handywrapper(driver)
-                time.sleep(3)  # Wait for page to load
-                # Example usage:
-                selectors = [
-                "div.main-wrapper",    # top-level host CSS selector (change to actual host)
-                "div#content",         # element inside that host's shadowRoot (if nested)
-                'input[type="checkbox"]'
-                ]
                 ok = hw.click_in_shadow(selectors)
-
                 hw.wait_explicitly(By.ID, "ext_username-inputEl")
                 username_field = hw.find_element(By.ID, "ext_username-inputEl")
                 hw.wait_explicitly(By.ID, "ext_password-inputEl")
@@ -140,10 +141,11 @@ def start_automation_process():
 
                 # hw.Click_element(By.XPATH, "//input[@type='checkbox']")
                 # Wait for login to complete and click submit
-                hw.Click_element(By.ID, "accept-cookies")
+                # hw.Click_element(By.ID, "accept-cookies")
                 hw.Click_element(By.ID, "ext_submitLogin-btnInnerEl")
+                ok = hw.click_in_shadow(selectors)
                 print("Login successful.")
-                time.sleep(5)  # Wait for login to process
+                time.sleep(2)  # Wait for login to process
             except Exception as e:
                 print(f"An error occurred during login: {e}")
                 driver.quit()
@@ -155,10 +157,12 @@ def start_automation_process():
                 time.sleep(2)
                 hw.wait_explicitly(By.XPATH, "//span[.='No']")
                 hw.Click_element(By.XPATH, "//span[.='No']")  # Click 'No' on popup
-
+                # ok = hw.click_in_shadow(selectors)
+                time.sleep(2)
                 hw.wait_explicitly(By.ID, "PGMID_1000023")
                 hw.hover(By.ID, "PGMID_1000023")  # Hover over 'Bookings' tab
-                hw.Click_element(By.ID, "PGMID_1400045")  # Click on 'Bookings' tab
+                hw.Click_element(By.ID, "PGMID_1400045")
+                ok = hw.click_in_shadow(selectors)  # Click on 'Bookings' tab
                 print("Navigated to Create Booking page.")
             except Exception as e:
                 print(f"An error occurred while navigating to Create Booking: {e}")
@@ -168,9 +172,8 @@ def start_automation_process():
         login(username, password)
         start_booking()
 
-        shipment_records = read_excel_all_records(file_path='Shipment Plan_26Dec25 FOR HADDAD.xlsx', sheet_name='Sheet1')
-        dmf_records = read_excel_all_records(file_path="DMF MASTER SHEET FOR HADDAD ORDERS_FA'24(AutoRecovered).xlsx", sheet_name='Master')
-        automate_process(driver, shipment_records[:2])
+        
+        automate_process(driver, shipment_records)
              
         edit_details(driver, dmf_records)
 
@@ -184,51 +187,87 @@ def automate_process(driver, records):
         hw = Handywrapper(driver)
         first_record = True
         for record in records:
+            country = record.get("Country", "")
+            if not country.lower() == "united states" and not country.lower() == "europe":
+                continue
+            
             if first_record:
                 print(f"Processing record: {record}")
-                time.sleep(2)  # Wait before processing next record
+                time.sleep(1)
+                hw.wait_explicitly(By.ID, "brCreateForm:poNumTxt")
                 po_num = hw.find_element(By.ID, "brCreateForm:poNumTxt")
-                po_num.send_keys("0"+record.get("PO#", ""))
+                po_num.send_keys("0"+str(record.get("PO#", "")).split("-")[0])
                 hw.Click_element(By.ID, "brCreateForm:custComboPo")
-                if record.get("Customer Name", "") == "USA":
+                if record.get("Country", "") == "UNITED STATES":
                     hw.Click_element(By.XPATH, f"//select[@id='brCreateForm:custComboPo']//option[.='HADDAD APPAREL GROUP, LTD']")
                 elif record.get("Customer Name", "") == "Europe":
                     hw.Click_element(By.XPATH, f"//select[@id='brCreateForm:custComboPo']//option[.='Haddad Europe']")
+                else:
+                    continue
 
                 hw.Click_element(By.ID, "poItemsRadio:0")
 
                 hw.Click_element(By.ID, "brCreateForm:next")
                 time.sleep(2)  # Wait for next page to load
-
                 hw.Click_element(By.ID, "vdrBrAmendForm:movementTypeBRSI001")
-                hw.find_element(By.ID, "crdBRSI008_extdate-inputEl").send_keys(record.get("Plan-HOD", ""))
+                
+                plan_hod = record.get("Plan-HOD", "")
+                # Convert to mm/dd/yyyy string for send_keys
+                plan_hod_str = ""
+                if hasattr(plan_hod, 'strftime'):
+                    plan_hod_str = plan_hod.strftime("%m/%d/%Y")
+                elif isinstance(plan_hod, str) and plan_hod:
+                    try:
+                        # Try to parse string to datetime
+                        plan_hod_dt = pd.to_datetime(plan_hod, errors='coerce')
+                        if pd.notnull(plan_hod_dt):
+                            plan_hod_str = plan_hod_dt.strftime("%m/%d/%Y")
+                        else:
+                            plan_hod_str = plan_hod
+                    except Exception:
+                        plan_hod_str = plan_hod
+                elif plan_hod is not None:
+                    plan_hod_str = str(plan_hod)
+
+                hw.wait_explicitly(By.ID, "crdBRSI008_extdate-inputEl")
+                hw.find_element(By.ID, "crdBRSI008_extdate-inputEl").send_keys(plan_hod_str)
                 hw.Click_element(By.XPATH, "//option[@value='CY-CY']")
                 hw.Click_element(By.ID, "vdrBrAmendForm:woodPackingBRSI002:1")
                 hw.Click_element(By.ID, "vdrBrAmendForm:msdsGoodsBRSI017:1")
                 hw.Click_element(By.ID, "vdrBrAmendForm:hasCustomsDeclaration:1")
                 first_record = False
-            
-            time.sleep(1)
-            hw.Click_element(By.ID, "vdrBrAmendForm:addItemBtn")
-
-            hw.find_element(By.ID, "vdrBrAmendForm:poNumTxt").send_keys("0" + record.get("PO#", ""))
-            time.sleep(1)  # Wait for item to be added
-            hw.Click_element(By.ID, "vdrBrAmendForm:j_id1710:0")
-
-            hw.Click_element(By.ID, "gridcolumn-1141-textEl")
-            hw.Click_element(By.ID, "vdrBrAmendForm:j_id1738")
-
+            else:
+                hw.scroll_to_element(By.ID, "vdrBrAmendForm:addItemBtn")
+                hw.Click_element(By.ID, "vdrBrAmendForm:addItemBtn")
+                hw.wait_explicitly(By.ID, "vdrBrAmendForm:poNumTxt")
+                add_po = hw.find_element(By.ID, "vdrBrAmendForm:poNumTxt")
+                add_po.clear()
+                add_po.send_keys("0" + str(record.get("PO#", "")))
+                hw.Click_element(By.XPATH, "//input[@id='vdrBrAmendForm:j_id1710:0']")
+                hw.Click_element(By.XPATH, "//input[contains(@id,'vdrBrAmendForm:j_id') and @value='Retrieve']")
+                time.sleep(3)
+                no_records_alert = hw.find_element(By.XPATH, "//span[.='No Records Found']")
+                if no_records_alert in ["", None]:
+                    hw.Click_element(By.XPATH, "(//div[@id='retrievePoItemGridDiv']/div/div/div/div/div[contains(@id,'gridcolumn')]//span)[1]")
+                    hw.Click_element(By.ID, "vdrBrAmendForm:j_id1738")
+                else:
+                    hw.Click_element(By.XPATH, "//input[@id='vdrBrAmendForm:j_id1719' and @value='Cancel']")
 
     except Exception as e:
         print(f"An error occurred during automation: {e}")
-    finally:
-        driver.quit()
+
 
 def edit_details(driver, records):
     try:
         hw = Handywrapper(driver)
+        actions = ActionChains(driver)
+        
+        hw.wait_explicitly(By.ID, "poItemGrid-targetEl")
         added_pos = hw.find_elements_list_of_text(By.XPATH, "//div[@id='poItemGrid-targetEl']/div[1]//tr[1]/td[3]")
-        records = ["0"+str(record.get("PO#", "")) for record in added_pos]
+        # Reorder records to match the sequence in added_pos, matching PO# to po[1:]
+        records = [next((record for record in records if str(record["PO#"]) == str(po)[1:]), None) for po in added_pos]
+        # Remove any None values if a PO# was not found
+        records = [record for record in records if record is not None]
         
         for ind in range(len(records)):
             PO_num = records[ind].get("PO#", "")
@@ -239,27 +278,75 @@ def edit_details(driver, records):
             Gross_weight = records[ind].get("GR-Wt", "")
             Color_code = records[ind].get("Pantone", "")
 
-            po_elem = hw.find_elements_list(By.XPATH, f"((//div[@id='poItemGrid-targetEl']//table[@class])[2]/tbody/tr)[{ind + 2}]")
-            time.sleep(2)  # Wait before processing next record
-            hw.Click_element(By.ID, f"((//div[@id='poItemGrid-targetEl']//table[@class])[2]/tbody/tr)[2]/td[1]")
+            hw.wait_explicitly(By.XPATH, f"((//div[@id='poItemGrid-targetEl']//table[@class])[2]/tbody/tr)[{ind + 2}]")
+            # po_elem = hw.find_elements(By.XPATH, f"((//div[@id='poItemGrid-targetEl']//table[@class])[2]/tbody/tr)[{ind + 2}]")
+            time.sleep(1)  # Wait before processing next record
+            hw.scroll_to_element(By.XPATH, f"((//div[@id='poItemGrid-targetEl']//table[@class])[2]/tbody/tr)[{ind + 2}]/td[1]")
+            hw.Click_element(By.XPATH, f"((//div[@id='poItemGrid-targetEl']//table[@class])[2]/tbody/tr)[{ind+ 2}]/td[1]")
             
-            hw.find_element(By.XPATH, "(//table[contains(@id,'combobox')]//input[@value])[2]").clear().send_keys("CARTON")
-            
-            hw.find_element(By.XPATH, "(//table[contains(@id,'combobox')]//input[@value])[3]").clear().send_keys("PIECE")
+            time.sleep(1)
+            hw.wait_explicitly(By.XPATH, "(//table[contains(@id,'combobox')]//input[@value])[1]")
+            package = hw.find_element(By.XPATH, "(//table[contains(@id,'combobox')]//input[@value])[1]")
+            package.clear()
+            package.send_keys("CARTO")
+            package.send_keys("N")
+            hw.Click_element(By.XPATH, f"(//li[.='CARTON'])[1]")
 
-            hw.Click_element(By.ID, f"((//div[@id='poItemGrid-targetEl']//table[@class])[2]/tbody/tr)[2]/td[2]")
+            hw.wait_explicitly(By.XPATH, "(//table[contains(@id,'combobox')]//input[@value])[2]")   
+            unit = hw.find_element(By.XPATH, "(//table[contains(@id,'combobox')]//input[@value])[2]")
+            unit.clear()
+            unit.send_keys("PIEC")
+            unit.send_keys("E")
+            time.sleep(1)
+            piece_list = hw.find_elements(By.XPATH, "(//li[.='PIECE'])")
+            piece = piece_list[-1]
+            hw.Click_element(By.XPATH, element=piece)
 
+            hw.Click_element(By.XPATH, f"(//div[contains(@id,'gridview')])[3]/table")
+            time.sleep(0.5)
+            hw.Click_element(By.XPATH, f"(((//div[@id='poItemGrid-targetEl']//table[@class])[2]/tbody/tr)/td[2]//table[contains(@id,'ext-gen')])[{ind + 1}]")
+            time.sleep(0.5)
             #vol gwt len, wid height
-            hw.find_element(By.XPATH, "(//div[contains(@id,'form')]//input[contains(@id,'numberfield')])[2]").clear().send_keys(Gross_weight)
-            hw.find_element(By.XPATH, "(//div[contains(@id,'form')]//input[contains(@id,'numberfield')])[3]").clear().send_keys(length)
-            hw.find_element(By.XPATH, "(//div[contains(@id,'form')]//input[contains(@id,'numberfield')])[4]").clear().send_keys(width)
-            hw.find_element(By.XPATH, "(//div[contains(@id,'form')]//input[contains(@id,'numberfield')])[5]").clear().send_keys(height)
+            hw.wait_explicitly(By.XPATH, "(//div[contains(@id,'form')]//input[contains(@id,'numberfield')])[2]")
+            # hw.find_element(By.XPATH, "(//div[contains(@id,'form')]//input[contains(@id,'numberfield')])[2]")
+            Gross_weight_elem = hw.find_element(By.XPATH, "(//div[contains(@id,'form')]//input[contains(@id,'numberfield')])[2]")
+            Gross_weight_elem.clear()
+            Gross_weight_elem.send_keys(Gross_weight)
 
-            hw.Click_element(By.ID, f"((//div[@id='poItemGrid-targetEl']//table[@class])[2]/tbody/tr)[2]/td[13]")
-            hw.find_element(By.XPATH, "//input[contains(@id,'textfield') and contains(@id,'input') and @name='G06']").clear().send_keys(Color_code)
-        
+            hw.wait_explicitly(By.XPATH, "(//div[contains(@id,'form')]//input[contains(@id,'numberfield')])[3]")
+            length_elem = hw.find_element(By.XPATH, "(//div[contains(@id,'form')]//input[contains(@id,'numberfield')])[3]")
+            length_elem.clear()
+            length_elem.send_keys(length)
+            
+            hw.wait_explicitly(By.XPATH, "(//div[contains(@id,'form')]//input[contains(@id,'numberfield')])[4]")
+            width_elem = hw.find_element(By.XPATH, "(//div[contains(@id,'form')]//input[contains(@id,'numberfield')])[4]")
+            width_elem.clear()
+            width_elem.send_keys(width)
+            
+            hw.wait_explicitly(By.XPATH, "(//div[contains(@id,'form')]//input[contains(@id,'numberfield')])[5]")
+            height_elem = hw.find_element(By.XPATH, "(//div[contains(@id,'form')]//input[contains(@id,'numberfield')])[5]")
+            height_elem.clear()
+            height_elem.send_keys(height)
+
+            hw.Click_element(By.XPATH, f"(//div[contains(@id,'gridview')])[3]/table")
+            time.sleep(0.5)
+            hw.scroll_to_element(By.XPATH, f"((//div[@id='poItemGrid-targetEl']//table[@class])[2]/tbody/tr)[{ind + 2}]/td[13]")
+            hw.Click_element(By.XPATH, f"((//div[@id='poItemGrid-targetEl']//table[@class])[2]/tbody/tr)[{ind + 2}]/td[13]")
+            
+            time.sleep(0.5)
+            actions.send_keys(Color_code).perform()
+            # hw.wait_explicitly(By.XPATH, "//input[contains(@id,'textfield') and contains(@name,'G')]")
+            # Color_code_elem = hw.find_elements(By.XPATH, "//input[contains(@id,'textfield') and contains(@name,'G')]")
+            # Color_code = Color_code_elem[ind]
+            # Color_code.clear()
+            # time.sleep(0.5)
+            # Color_code.send_keys(Color_code)
+        time.sleep(1)
+        hw.scroll_to_element(By.ID, "vdrBrAmendForm:submitBtn_hm_pre2")
         hw.Click_element(By.ID, "vdrBrAmendForm:submitBtn_hm_pre2")
     except Exception as e:
         print(f"An error occurred during editing details: {e}")
-
-start_automation_process()
+if __name__ == "__main__":
+    shipment_records = read_excel_all_records(file_path='Shipment Plan_26Dec25 FOR HADDAD.xlsx', sheet_name='Sheet1')
+    dmf_records = read_excel_all_records(file_path="DMF MASTER SHEET FOR HADDAD ORDERS_FA'24(AutoRecovered).xlsx", sheet_name='Master')
+    start_automation_process()
