@@ -142,6 +142,7 @@ def start_automation_process(shipment_records,dmf_records):
                 # hw.Click_element(By.XPATH, "//input[@type='checkbox']")
                 # Wait for login to complete and click submit
                 # hw.Click_element(By.ID, "accept-cookies")
+                time.sleep(3)
                 hw.Click_element(By.ID, "ext_submitLogin-btnInnerEl")
                 ok = hw.click_in_shadow(selectors)
                 print("Login successful.")
@@ -344,6 +345,8 @@ def edit_details(driver, records):
         time.sleep(1)
         hw.scroll_to_element(By.ID, "vdrBrAmendForm:submitBtn_hm_pre2")
         hw.Click_element(By.ID, "vdrBrAmendForm:submitBtn_hm_pre2")
+        hw.Click_element(By.ID, "vdrBrAmendForm:j_id1751")
+        time.sleep(2)
     except Exception as e:
         print(f"An error occurred during editing details: {e}")
 if __name__ == "__main__":

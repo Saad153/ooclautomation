@@ -4,6 +4,7 @@ import customtkinter
 import threading
 from tkinter import filedialog, messagebox
 from automation import start_automation_process, read_excel_all_records
+import time
 
 customtkinter.set_appearance_mode("light")
 customtkinter.set_default_color_theme('blue')
@@ -83,5 +84,9 @@ def start_gui():
 
     root.mainloop()
 
-if __name__ == "__main__":
+try:
     start_gui()
+except Exception as e:
+    print(e)
+    while True:
+        pass
